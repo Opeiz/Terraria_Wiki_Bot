@@ -72,8 +72,3 @@ Recuerda: es necesario ejecutar el bot para que funcione correctamente en tu ser
    ```sh
    python main.py
    ```
-
-## Contribuir
-
-Estoy abierto a recibir ayuda o mejoras para el proyecto.  
-Siéntete libre de hacer un fork o clonar el repositorio para contribuir.
