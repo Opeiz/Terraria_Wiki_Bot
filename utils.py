@@ -7,7 +7,9 @@ def parse_ingredients(cell):
         name = li.get_text(strip=True)
         quantity_match = re.search(r'(\d+)$', name)
         quantity = quantity_match.group(1) if quantity_match else '?'
-        name = name[: -len(quantity)].strip()
+        
+        if quantity != '?':
+            name = name[: -len(quantity)].strip()
 
         img = li.find('img')['data-src']
         link = 'https://terraria.fandom.com' + li.find('a')['href']
@@ -41,6 +43,7 @@ def create_embed_table(html):
 
     for i, row in enumerate(rows):
         cells = row.find_all('td')
+        
 
         # Primera fila: contiene resultado, ingredientes y estación
         if len(cells) == 3:
@@ -193,3 +196,6 @@ def get_item_icon(html):
             if a_tag and a_tag.has_attr('href'):
                 return a_tag['href']
     return None
+
+
+

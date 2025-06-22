@@ -25,7 +25,40 @@ bot = commands.Bot(
 
 roles_terraria = {"mago":"🪄 Mago","invocador":"🐉 Invocador","tanque":"🛡️ Guardián", "distancia":"🏹 Distancia"}
 
-url_base = 'https://terraria.fandom.com/es/wiki'
+# Idiomas soportados por la wiki de Terraria
+supported_languages = {
+    "es": "es",    # Español
+    "en": "en",    # Inglés
+    # "pt": "pt-br", # Portugués (Brasil)
+    # "fr": "fr",    # Francés
+    # "de": "de",    # Alemán
+    # "ru": "ru",    # Ruso
+    # "it": "it",    # Italiano
+    # "pl": "pl",    # Polaco
+    # "zh": "zh",    # Chino
+    # "ja": "ja",    # Japonés
+}
+
+# Guardar idioma por servidor
+guild_languages = {}
+url_base = None
+
+def get_wiki_base_url(msg):
+    if msg == "en":
+        return "https://terraria.fandom.com/wiki"
+    else:
+        return f"https://terraria.fandom.com/{msg}/wiki"
+
+@bot.command()
+async def idioma(ctx, *, msg):
+    global url_base
+    if msg not in supported_languages:
+        await ctx.send("❌ Idioma no soportado. Usa uno de los siguientes: " + ", ".join(supported_languages.keys()))
+        return
+
+    url_base = get_wiki_base_url(msg)
+    await ctx.send(f"✅ Idioma de la wiki cambiado a: **{msg}**")
+
 
 @bot.event
 async def on_ready():
@@ -43,7 +76,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 @bot.command()
-async def hello(ctx):
+async def saludar(ctx):
     await ctx.send(f"Hola {ctx.author.mention}! Como estas?")
 
 @bot.command()
@@ -101,7 +134,15 @@ async def buscar(ctx, *, msg):
 
     soup = BeautifulSoup(page.content, 'html.parser')
 
-    type_of_table = soup.find('h2', class_="mw-headline" )
+    # Buscar si existe una sección "Creacion" o "Usos"
+    section_type = None
+    for h2 in soup.find_all('h2'):
+        span = h2.find('span', class_="mw-headline")
+        if span and span.get('id') in ["Creacion", "Usos", "Creación"]:
+            section_type = span.get('id')
+            break
+    # print(f"Tipo de sección: {section_type}")
+
     tables = soup.find_all('table', class_="terraria cellborder recipes sortable")
     content_div = soup.find('div', class_="mw-content-ltr mw-parser-output")
     aside = content_div.find('aside') if content_div else None
@@ -126,8 +167,10 @@ async def buscar(ctx, *, msg):
         status.append("🔎 Se puede encontrar")
     if proba_dropeo is not None:
         status.append("🎲 Lo dejan enemigos")
-    if embed_table['recipes']:
+    if embed_table['recipes'] and section_type in ["Creacion", "Creación"]:
         status.append("🔨 Se puede fabricar")
+    if embed_table['recipes'] and section_type == "Usos":
+        status.append("🧪 Se usa para fabricar")
     if not status:
         status.append("")
 
@@ -155,13 +198,13 @@ async def buscar(ctx, *, msg):
 
     # Create the embed
     embed = discord.Embed(
-        title=f"{item_name}",
+        title=f"{msg.capitalize()}",
         description=f"{' | '.join(status)}\n\n{description}",
         color=discord.Color.orange()
     ).set_thumbnail(url=get_item_icon(str(content_div)))
 
 
-    if tipo_de_elemento == "Enemigo" or tipo_de_elemento == "Jefe":
+    if tipo_de_elemento == "Enemigo" or tipo_de_elemento == "Jefe" or tipo_de_elemento == "Monstruo":
         
         vida = aside.find(attrs={'data-source': 'vida'})
         bioma = aside.find(attrs={'data-source': 'biomas'})
@@ -183,40 +226,51 @@ async def buscar(ctx, *, msg):
 
         # Mostrar los objetos que deja el enemigo y sus probabilidades de drop
         drops = []
-        drop_section = aside.find_all(attrs={'data-source': 'deja'})
-        for drop_div in drop_section:
-            # Buscar el enlace y el nombre del objeto
-            link_tag = drop_div.find('a')
-            obj_name = link_tag.get_text(strip=True) if link_tag else drop_div.get_text(strip=True)
-            obj_link = f"https://terraria.fandom.com{link_tag['href']}" if link_tag and link_tag.has_attr('href') else None
-            # Buscar la probabilidad en el siguiente div hermano
-            prob_text = ""
-            next_div = drop_div.find_next_sibling('div')
-            if next_div:
-                prob_match = re.search(r'(\d+(\.\d+)?%)', next_div.get_text())
-                if prob_match:
-                    prob_text = prob_match.group(1)
-                else:
-                    prob_text = next_div.get_text(strip=True)
-            else:
+        # Find all drop and money divs in the aside
+        drop_money_divs = aside.find_all("div", class_="pi-smart-data-value")
+        i = 0
+        while i < len(drop_money_divs):
+            div = drop_money_divs[i]
+            data_source = div.get("data-source", "")
+            # Handle money drop
+            if data_source == "dinero":
+                # Get the amount and coin type (text + img alt)
+                amount = div.get_text(" ", strip=True)
+                img = div.find("img")
+                coin = img["alt"] if img and img.has_attr("alt") else ""
+                money_name = f"{amount} {coin}".strip()
+                # Try to get probability from next div if it is also dinero
                 prob_text = "Desconocida"
-
-            # Formatear
-            if obj_link:
-                drops.append({'name': obj_name, 'link': obj_link, 'prob': prob_text if prob_text else "Desconocida"})
-            else:
-                drops.append({'name': obj_name, 'link': None, 'prob': prob_text if prob_text else "Desconocida"})
+                if i + 1 < len(drop_money_divs) and drop_money_divs[i + 1].get("data-source", "") == "dinero":
+                    prob_text = drop_money_divs[i + 1].get_text(" ", strip=True)
+                    i += 1
+                drops.append({'name': money_name, 'link': None, 'prob': prob_text})
+            # Handle item drop
+            elif data_source == "deja":
+                # Try to get item name and link
+                link_tag = div.find("a", title=True)
+                obj_name = link_tag.get("title") if link_tag else div.get_text(" ", strip=True)
+                obj_link = f"https://terraria.fandom.com{link_tag['href']}" if link_tag and link_tag.has_attr('href') and link_tag['href'].startswith("/") else None
+                # Try to get probability from next div if it is also deja
+                prob_text = "Desconocida"
+                if i + 1 < len(drop_money_divs) and drop_money_divs[i + 1].get("data-source", "") == "deja":
+                    prob_div = drop_money_divs[i + 1]
+                    prob_text = prob_div.get_text(" ", strip=True)
+                    i += 1
+                drops.append({'name': obj_name, 'link': obj_link, 'prob': prob_text})
+            i += 1
 
         if drops:
             drop_lines = []
             for d in drops:
                 if d['link']:
                     drop_lines.append(f"[{d['name']}]({d['link']}) — **{d['prob']}**")
-                
+                else:
+                    drop_lines.append(f"{d['name']} — **{d['prob']}**")
             embed.add_field(
-            name="🎁 Objetos que deja y probabilidad",
-            value="\n".join(drop_lines),
-            inline=False
+                name="🎁 Objetos que deja y probabilidad",
+                value="\n".join(drop_lines),
+                inline=False
             )
 
     else:
@@ -258,15 +312,24 @@ async def buscar(ctx, *, msg):
                 for ing in recipe:
                     # If 'quantity' is present and not 1, show it; if missing or 1, omit
                     qty = ing.get('quantity')
-                    if qty is not None and str(qty) != "1":
+
+                    if qty is not None and str(qty) != "?":
                         ingredients_text += f"[{ing['name']}]({ing['link']}) x{qty}\n"
                     else:
                         ingredients_text += f"[{ing['name']}]({ing['link']})\n"
-                embed.add_field(
-                    name=f"🗎 Receta {i+1}",
-                    value=ingredients_text.strip(),
-                    inline=False
-                )
+
+                if section_type == "Usos":
+                    embed.add_field(
+                        name=f"🧪 Uso {i + 1}: **{embed_table['result']['name']}**",
+                        value=ingredients_text.strip(),
+                        inline=False
+                    )
+                elif section_type in ["Creacion", "Creación"]:
+                    embed.add_field(
+                        name=f"🔨 Receta {i + 1}",
+                        value=ingredients_text.strip(),
+                        inline=False
+                    )
                 
             stations = embed_table['stations']
             unique_stations = {}
@@ -299,6 +362,84 @@ async def buscar(ctx, *, msg):
 
     await ctx.send(embed=embed)
 
+# @bot.command()
+# async def mision(ctx, *, msg):
+#     if not msg:
+#         await ctx.send("❌ Por favor, proporciona el nombre de un objeto para la misión.")
+#         return
+
+#     # Buscar el objeto principal en la wiki y obtener su receta
+#     item_name = msg.replace(' ', '_').capitalize()
+#     url = f"{url_base}/{item_name}"
+#     page = requests.get(url)
+#     if page.status_code != 200:
+#         await ctx.send("❌ No se encontró el objeto en la wiki de Terraria. Revisa el nombre y vuelve a intentarlo.")
+#         return
+
+#     soup = BeautifulSoup(page.content, 'html.parser')
+#     content_div = soup.find('div', class_="mw-content-ltr mw-parser-output")
+#     if not content_div:
+#         await ctx.send("❌ No se pudo analizar la página del objeto.")
+#         return
+
+#     # Recursivamente obtener todos los ingredientes y cantidades (considerando todas las recetas)
+#     def get_ingredients(item, qty_needed=1, visited=None):
+#         if visited is None:
+#             visited = set()
+#         item_key = item.lower()
+#         if item_key in visited:
+#             return {}
+#         visited.add(item_key)
+
+#         # Buscar receta del objeto en su propia página
+#         item_name = item.replace(' ', '_').capitalize()
+#         url = f"{url_base}/{item_name}"
+#         page = requests.get(url)
+#         if page.status_code != 200:
+#             return {item: qty_needed}
+#         soup = BeautifulSoup(page.content, 'html.parser')
+#         content_div = soup.find('div', class_="mw-content-ltr mw-parser-output")
+#         if not content_div:
+#             return {item: qty_needed}
+
+#         embed_table = create_embed_table(str(content_div))
+#         recipes = embed_table['recipes']
+#         if not recipes:
+#             return {item: qty_needed}
+
+#         # Sumar ingredientes de todas las recetas posibles
+#         all_ingredients = {}
+#         for recipe in recipes:
+#             recipe_ings = {}
+#             for ing in recipe:
+#                 ing_name = ing['name']
+#                 ing_qty = int(ing.get('quantity', 1)) if str(ing.get('quantity', 1)).isdigit() else 1
+#                 sub_ings = get_ingredients(ing_name, ing_qty * qty_needed, visited.copy())
+#                 for k, v in sub_ings.items():
+#                     recipe_ings[k] = recipe_ings.get(k, 0) + v
+#             # Sumar los ingredientes de esta receta a los totales
+#             for k, v in recipe_ings.items():
+#                 all_ingredients[k] = max(all_ingredients.get(k, 0), v)
+#         return all_ingredients
+
+#     ingredients = get_ingredients(msg)
+#     if not ingredients:
+#         await ctx.send("No se encontraron ingredientes para este objeto.")
+#         return
+
+#     # Crear embed con lista de ingredientes (tipo checklist)
+#     embed = discord.Embed(
+#         title=f"📝 Misión: Crear {msg.capitalize()}",
+#         description="Lista de materiales necesarios:",
+#         color=discord.Color.blue()
+#     )
+#     checklist = ""
+#     for ing, qty in ingredients.items():
+#         checklist += f"☐ {ing} x{qty}\n"
+#     embed.add_field(name="Materiales", value=checklist, inline=False)
+#     await ctx.send(embed=embed)
+
+
 @bot.command()
 async def ayuda(ctx):
     embed = discord.Embed(
@@ -306,7 +447,7 @@ async def ayuda(ctx):
         description="Aquí tienes una lista de comandos que puedes usar:",
         color=discord.Color.green()
     )
-    embed.add_field(name="/hello", value="Saluda al bot.", inline=False)
+    embed.add_field(name="/saludar", value="Saluda al bot.", inline=False)
     embed.add_field(name="/asignar <rol>", value="Asigna un rol de Terraria. Opciones: " + ", ".join(roles_terraria.keys()), inline=False)
     embed.add_field(name="/quitar <rol>", value="Quita un rol de Terraria. Opciones: " + ", ".join(roles_terraria.keys()), inline=False)
     embed.add_field(name="/buscar <objeto>", value="Busca información de creación de un objeto en la wiki de Terraria.", inline=False)
